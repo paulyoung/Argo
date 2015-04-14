@@ -6,11 +6,7 @@ The Greek word for _swift_ and the ship used by Jason, son of Aeson, of the
 Argonauts. Aeson is the JSON parsing library in Haskell that inspired Argo,
 much like Aeson inspired his son Jason.
 
-NOTE: The master branch of Argo is pushing ahead with Swift 1.2 support.
-Support for Swift 1.1 can be found on branch [swift-1.1] and in the 0.3.x
-versions of tags/releases.
-
-[swift-1.1]: https://github.com/thoughtbot/Argo/tree/swift-1.1
+NOTE: For Swift 1.1 support, use the 0.3.x versions of tags/releases.
 
 ## Installation
 
@@ -31,10 +27,12 @@ for up to date installation instructions.
 
 [carthage-installation]: https://github.com/Carthage/Carthage#adding-frameworks-to-an-application
 
-You'll also need to add `Runes.framework` to your project. [Runes] is a
-dependency of Argo, so you don't need to specify it in your Cartfile.
+You'll also need to add `Runes.framework` and `Box.framework` to your project.
+[Runes] and [Box] are a dependency of Argo, so you don't need to specify it in
+your Cartfile.
 
 [Runes]: https://github.com/thoughtbot/runes
+[Box]: https://github.com/robrix/box
 
 ### [CocoaPods]
 
@@ -61,7 +59,7 @@ I guess you could do it this way if that's your thing.
 Add this repo as a submodule, and add the project file to your workspace. You
 can then link against `Argo.framework` for your application target.
 
-You'll also need to add [Runes] to your project the same way.
+You'll also need to add [Runes] and [Box] to your project the same way.
 
 ## Usage tl;dr:
 
@@ -83,7 +81,7 @@ extension User: JSONDecodable {
     return User(id: id, name: name, email: email, role: role, companyName: companyName, friends: friends)
   }
 
-  static func decode(j: JSONValue) -> User? {
+  static func decode(j: JSON) -> Decoded<User> {
     return User.create
       <^> j <| "id"
       <*> j <| "name"
@@ -99,8 +97,7 @@ extension User: JSONDecodable {
 let json: AnyObject? = NSJSONSerialization.JSONObjectWithData(data, options: NSJSONReadingOptions(0), error: .None)
 
 if let j: AnyObject = json {
-  let value = JSONValue.parse(j)
-  let user = User.decode(value)
+  let user: User? = decode(j)
 }
 ```
 
@@ -128,10 +125,10 @@ but the JSON you receive from the server looks like this:
 }
 ```
 
-you would want that JSON parsing to fail and return `.None` instead of a
-`User` object. That base concept means that when you're dealing with an actual
-`User` object, you can be sure that when you ask for `user.id`, you're going
-to get the type you expect.
+you would want that JSON parsing to fail and return some error state instead of
+a `User` object. That base concept means that when you're dealing with an
+actual `User` object, you can be sure that when you ask for `user.id`, you're
+going to get the type you expect.
 
 If you're interested in learning more about the concepts and ideology that
 went into building Argo, we recommend reading the series of articles that were
@@ -164,27 +161,31 @@ reading the following articles:
 - [Functional Swift for Dealing with Optional Values](http://robots.thoughtbot.com/functional-swift-for-dealing-with-optional-values)
 - [Railway Oriented Programming](http://fsharpforfunandprofit.com/posts/recipe-part2/)
 
+And check out this talk:
+
+- [How I Learned To Stop Worrying And Love The Functor](https://github.com/gfontenot/talks/tree/master/Functors)
+
 ## Usage
 
-The first thing you need to do when you receive JSON data is convert it to an
-instance of the `JSONValue` enum. This is done by passing the `AnyObject`
-value returned from `NSJSONSerialization` to `JSONValue.parse()`:
+The first thing you need to do when you receive JSON data is convert it from
+`NSData` to an `AnyObject` using the build in `NSJSONSerialization` API. Once
+you have the `AnyObject`, you can call the global `decode` function to get back
+the decoded model.
 
 ```swift
 let json: AnyObject? = NSJSONSerialization.JSONObjectWithData(responseData, options: NSJSONReadingOptions(0), error: nil)
 
 if let j: AnyObject = json {
-  let value: JSONValue = JSONValue.parse(j)
-  let user: User? = User.decode(value)
+  let user: User? = decode(j)
 }
 ```
 
 Note that you probably want to use an error pointer to track errors from
 `NSJSONSerialization`.
 
-The `JSONValue` enum exists to help with some of the type inference, and also
-wraps up some of the casting that we'll need to do to transform the JSON into
-native types.
+The `JSON` enum exists to help with some of the type inference, and also wraps
+up some of the casting that we'll need to do to transform the JSON into native
+types.
 
 Next, you need to make sure that models that you wish to decode from JSON
 conform to the `JSONDecodable` protocol:
@@ -192,7 +193,7 @@ conform to the `JSONDecodable` protocol:
 ```swift
 public protocol JSONDecodable {
   typealias DecodedType = Self
-  class func decode(JSONValue) -> DecodedType?
+  class func decode(JSON) -> Decoded<DecodedType>
 }
 ```
 
@@ -207,10 +208,15 @@ enum RoleType: String {
 }
 
 extension RoleType: JSONDecodable {
-  static func decode(j: JSONValue) -> RoleType? {
+  static func decode(j: JSON) -> Decoded<RoleType> {
     switch j {
-    case let .JSONString(s): return RoleType(rawValue: s)
-    default: return .None
+
+    case let .String(s): 
+      switch RoleType(rawValue: s) {
+      case let .Some(x): return pure(x)
+      case .None: return .TypeMismatch("\(j) is not a RoleType") // Provide an Error message for a RoleType type mismatch
+
+    default: return .TypeMismatch("\(j) is not a String") // Provide an Error message for a string type mismatch
     }
   }
 }
@@ -256,10 +262,10 @@ the creation function. The common pattern will look like:
 return Model.create <^> paramOne <*> paramTwo <*> paramThree
 ```
 
-and so on. If any of those parameters are `.None`, the entire creation process
-will fail, and the function will return `.None`. If all of the parameters are
-`.Some(value)`, the value will be unwrapped and passed to the creation
-function.
+and so on. If any of those parameters are an error, the entire creation process
+will fail, and the function will return the first occuring error. If all of the
+parameters are successful, the value will be unwrapped and passed to the
+creation function.
 
 In order to help with the decoding process, Argo introduces two new operators
 for parsing a value out of the JSON:
@@ -273,8 +279,10 @@ The usage of these operators is the same regardless:
 - `json <| ["key", "nested"]` is analogous to `json["key"]["nested"]`
 
 Both operators will attempt to parse the value from the JSON and will also
-attempt to cast the value to the expected type. If it can't find a value, or
-if that value is of the wrong type, the function will return `.None`.
+attempt to cast the value to the expected type. If it can't find a value, the
+function will return a `Decoded.MissingKey(message)` error, or if that value is
+of the wrong type, the function will return a `Decoded.TypeMismatch(message)`
+error.
 
 There are also Optional versions of these operators:
 
@@ -292,7 +300,7 @@ conjunction with `map` and `apply`:
 
 ```swift
 extension User: JSONDecodable {
-  static func decode(j: JSONValue) -> User? {
+  static func decode(j: JSON) -> Decoded<User> {
     return User.create
       <^> j <| "id"
       <*> j <| "name"
@@ -305,10 +313,10 @@ For comparison, this same function without Argo would look like so:
 ```swift
 extension User {
   static func decode(j: NSDictionary) -> User? {
-    if let id = j["id"] as Int {
-      if let name = j["name"] as String {
-        return User(id: id, name: name)
-      }
+    if let id = j["id"] as Int,
+       let name = j["name"] as String
+    {
+      return User(id: id, name: name)
     }
 
     return .None
