@@ -15,7 +15,7 @@ struct TestModel {
   let userOpt: User?
 }
 
-extension TestModel: JSONDecodable {
+extension TestModel: Decodable {
   static func create(int: Int)(string: String)(double: Double)(float: Float)(bool: Bool)(intOpt: Int?)(stringArray: [String])(stringArrayOpt: [String]?)(eStringArray: [String])(eStringArrayOpt: [String]?)(userOpt: User?) -> TestModel {
     return TestModel(int: int, string: string, double: double, float: float, bool: bool, intOpt: intOpt, stringArray: stringArray, stringArrayOpt: stringArrayOpt, eStringArray: eStringArray, eStringArrayOpt: eStringArrayOpt, userOpt: userOpt)
   }
